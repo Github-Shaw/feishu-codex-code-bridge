@@ -181,7 +181,13 @@ export async function runStart(opts: StartOptions): Promise<void> {
     },
   };
 
-  bridge = await startChannel({ cfg, agent, sessions, workspaces, controls });
+  try {
+    bridge = await startChannel({ cfg, agent, sessions, workspaces, controls });
+  } catch (err) {
+    unregisterSync(entry.id);
+    cleanupTmpFiles();
+    throw err;
+  }
 
   // Backfill the bot's display name into the registry once WS handshake is
   // done — future starts conflicting on this app can show it in the prompt
