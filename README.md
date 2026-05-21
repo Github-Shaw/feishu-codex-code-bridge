@@ -51,10 +51,13 @@ The wizard creates the app shell, but you still need to confirm a few things on 
 - `im:message`
 - `im:message:send_as_bot`
 - `im:resource`
+- `im:chat` (needed when the bot creates or manages groups)
+- `drive:drive` (needed to read and reply to cloud-doc comments)
 
 **Event subscriptions (over long-lived WebSocket):**
 - `im.message.receive_v1`
 - `card.action.trigger`
+- `drive.notice.comment_add_v1` (needed for cloud-doc comment mentions)
 - `im.message.reaction.created_v1` / `deleted_v1` (optional)
 - `im.chat.member.bot.added_v1` (optional)
 
@@ -96,7 +99,7 @@ feishu-codex-code-bridge --help                List all commands
 | `/help` | Help card |
 | Any other `/xxx` | Forwarded verbatim to Codex |
 
-**Reply policy**: in a DM, the bot replies to anything. In a **group (including topic groups), the bot only replies when `@`-mentioned** (default since 0.1.22); unmentioned messages are ignored. `@all` is never answered. Cloud-doc comments must mention the bot. To restore the older "always answer in groups" behaviour: `/config` → "Require @bot in groups" → No.
+**Reply policy**: in a DM, the bot replies to anything. In a **group (including topic groups), the bot only replies when `@`-mentioned** (default since 0.1.22); unmentioned messages are ignored. `@all` is never answered. Cloud-doc comments must mention the bot. Mentions inserted directly into the document body are not cloud-doc comment events and will not wake the bridge. To restore the older "always answer in groups" behaviour: `/config` → "Require @bot in groups" → No.
 
 ## Data directories
 
