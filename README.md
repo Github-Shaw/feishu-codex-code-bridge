@@ -7,7 +7,7 @@ A lightweight bot that bridges Feishu / Lark messenger with your local Codex CLI
 ## What it does
 
 - Forwards Feishu / Lark messages (DM directly, or `@bot` in a group) to your local `codex` CLI, running in a working directory you control.
-- **Streaming card**: Codex's text and tool calls update on a single Lark card in real time — no waiting for the final reply.
+- **Streaming card**: shows phase progress and Codex text by default, without surfacing every tool call; detailed tool traces can be enabled in `/config` for debugging.
 - **Per-chat sessions**: each chat keeps its own Codex session, so conversations resume where they left off.
 - **Preempt + batch**: a new message interrupts the running run; rapid-fire messages get coalesced into one request.
 - **Multiple workspaces**: `/ws` switches between named project directories, with sessions tracked per workspace.
