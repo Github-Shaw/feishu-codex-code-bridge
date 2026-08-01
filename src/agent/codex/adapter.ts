@@ -16,7 +16,7 @@ export interface CodexAdapterOptions {
 type CodexChild = ChildProcessByStdio<Writable, Readable, Readable>;
 const MAX_STDERR_LOG_LINES = 40;
 
-const BRIDGE_SYSTEM_PROMPT = `# feishu-codex-code-bridge 运行约定
+export const BRIDGE_DEVELOPER_INSTRUCTIONS = `# feishu-codex-code-bridge 运行约定
 
 你正在 feishu-codex-code-bridge 里跑：把飞书/Lark 用户消息桥到本地 \`codex\` CLI。
 
@@ -86,6 +86,17 @@ sender_name: ...
    - 紧接着同一轮里跑 \`lark-cli auth login --device-code <code>\`，**这一步前台阻塞**直到用户点完或 10 分钟超时——这是你应该等的地方，不要丢到后台。
 4. 你前台阻塞期间，用户发的新消息 bridge 会自动排队，**不会打断你**；等你 tool_result 一回来，下一批消息再进来。所以放心阻塞。
 5. 如果用户中途想取消，他们会发 \`/stop\`——那时被 kill 是预期行为，不用兜底。
+
+## 分析与排障的证据约定
+
+当用户要求分析、定位、排查或给出根因时：
+
+1. 先回答用户真正问的现象和因果链，再放实现细节。
+2. 明确区分“直接证据”、“基于证据的推断/估算”和“待验证假设”；不得把抽样或外推直接写成已确认根因。
+3. 如果使用了时长、次数或比例估算，必须同时给出计算依据和不确定性。
+4. 本机 Codex session/rollout 不是当前任务的原始证据。除非用户明确要求续接、恢复或对比某个 session，不要为了得出当前结论而搜索旧 rollout。即使使用了旧结论，也要声明继承关系并独立核验关键事实。
+5. 最终回答优先保留会改变决策的信息：结论、直接证据、不确定性、修复动作。细节更多不等于结论更好。
+6. 长时间排查时及时发送简短进度；不要连续执行大量工具调用后才更新用户。
 `;
 
 export class CodexAdapter implements AgentAdapter {
@@ -113,13 +124,17 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   run(opts: AgentRunOptions): AgentRun {
-    const prompt = `${BRIDGE_SYSTEM_PROMPT}\n\n${opts.prompt}`;
+    // Keep stdin as the actual user message. Bridge operating rules belong
+    // to Codex's developer layer; prepending them here weakens task salience
+    // and records bridge policy as if the user had authored it.
+    const prompt = opts.prompt;
     const args = buildCodexArgs({
       cwd: opts.cwd,
       sessionId: opts.sessionId,
       model: opts.model,
       images: opts.images,
       permissionMode: opts.permissionMode,
+      developerInstructions: BRIDGE_DEVELOPER_INSTRUCTIONS,
       sandbox: this.sandbox,
       approvalPolicy: this.approvalPolicy,
       extraArgs: this.extraArgs,
@@ -136,6 +151,7 @@ export class CodexAdapter implements AgentAdapter {
       cwd: opts.cwd ?? process.cwd(),
       hasSession: Boolean(opts.sessionId),
       promptChars: prompt.length,
+      developerInstructionChars: BRIDGE_DEVELOPER_INSTRUCTIONS.length,
       model: opts.model,
       images: opts.images?.length ?? 0,
     });
@@ -229,12 +245,13 @@ export class CodexAdapter implements AgentAdapter {
   }
 }
 
-function buildCodexArgs(opts: {
+export function buildCodexArgs(opts: {
   cwd?: string;
   sessionId?: string;
   model?: string;
   images?: string[];
   permissionMode?: AgentRunOptions['permissionMode'];
+  developerInstructions?: string;
   sandbox: CodexAdapterOptions['sandbox'];
   approvalPolicy: CodexAdapterOptions['approvalPolicy'];
   extraArgs: string[];
@@ -249,6 +266,12 @@ function buildCodexArgs(opts: {
 
   if (opts.cwd) args.push('-C', opts.cwd);
   if (opts.model) args.push('-m', opts.model);
+  if (opts.developerInstructions) {
+    // `spawn` passes argv directly without a shell. Codex parses this value as
+    // TOML; JSON's quoted string representation safely preserves newlines and
+    // quotes and is valid for this document's contents.
+    args.push('-c', `developer_instructions=${JSON.stringify(opts.developerInstructions)}`);
+  }
   args.push(...opts.extraArgs);
 
   if (opts.sessionId) {

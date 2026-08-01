@@ -16,7 +16,7 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { renderText } from '../card/text-renderer';
+import { renderFinalText, renderText } from '../card/text-renderer';
 import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
@@ -495,7 +495,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const prompt = buildPrompt(batch, attachments, quotes);
   log.info('prompt', 'built', { promptChars: prompt.length, quotes: quotes.length });
 
-  const cwd = workspaces.cwdFor(scope) ?? homedir();
+  // Workspace binding is authoritative. If that auxiliary store is absent,
+  // retain the cwd already pinned to this chat's session instead of silently
+  // falling back to $HOME and dropping repository context.
+  const cwd = workspaces.cwdFor(scope) ?? sessions.getRaw(scope)?.cwd ?? homedir();
   const resumeFrom = sessions.resumeFor(scope, cwd);
   if (resumeFrom) {
     log.info('session', 'resume', { sessionId: resumeFrom, cwd });
@@ -559,6 +562,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   try {
     if (replyMode === 'card') {
+      let finalState = initialState;
       await channel.stream(
         chatId,
         {
@@ -566,6 +570,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             initial: renderCard(initialState),
             producer: async (ctrl) => {
               await processAgentStream(handle, sessions, scope, cwd, idleTimeoutMs, async (state) => {
+                finalState = state;
                 await ctrl.update(renderCard(filterForPrefs(state)));
               });
             },
@@ -573,18 +578,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
         sendOpts,
       );
+      await sendStandaloneFinal(channel, chatId, finalState, sendOpts);
     } else if (replyMode === 'markdown') {
+      let finalState = initialState;
       await channel.stream(
         chatId,
         {
           markdown: async (ctrl) => {
             await processAgentStream(handle, sessions, scope, cwd, idleTimeoutMs, async (state) => {
+              finalState = state;
               await ctrl.setContent(renderText(filterForPrefs(state)));
             });
           },
         },
         sendOpts,
       );
+      await sendStandaloneFinal(channel, chatId, finalState, sendOpts);
     } else {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
@@ -606,6 +615,28 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await removeReaction(channel, lastMsg.messageId, reactionId);
     }
   }
+}
+
+/**
+ * Deliver the terminal result independently from the streaming progress
+ * card. Feishu automatically closes streaming cards after roughly ten
+ * minutes; updating that expired card can appear successful while leaving
+ * its visible content stuck on an old progress frame. A regular message is
+ * not tied to the card lifecycle, so it is the canonical final delivery.
+ */
+async function sendStandaloneFinal(
+  channel: LarkChannel,
+  chatId: string,
+  state: RunState,
+  sendOpts: { replyTo: string; replyInThread?: boolean },
+): Promise<void> {
+  if (state.terminal === 'running') {
+    log.warn('final', 'skip-still-running');
+    return;
+  }
+  const body = renderFinalText(state);
+  await channel.send(chatId, { markdown: body }, sendOpts);
+  log.info('final', 'sent', { terminal: state.terminal, chars: body.length });
 }
 
 /**
