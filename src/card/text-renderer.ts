@@ -33,6 +33,35 @@ export function renderText(state: RunState): string {
   return parts.join('\n\n');
 }
 
+/**
+ * Render the canonical terminal delivery for a run.
+ *
+ * Streaming cards are progress surfaces, not a reliable delivery channel:
+ * Feishu closes them after roughly ten minutes.  The bridge therefore sends
+ * this compact result as a separate message once the run reaches a terminal
+ * state.  On success, the last text block is the agent's final answer; prior
+ * text blocks are progress commentary and tool narration.
+ */
+export function renderFinalText(state: RunState): string {
+  if (state.terminal === 'interrupted') return '_⏹ 已被中断_';
+  if (state.terminal === 'idle_timeout') {
+    const mins = state.idleTimeoutMinutes ?? 0;
+    return `_⏱ ${mins} 分钟无响应,已自动终止_`;
+  }
+  if (state.terminal === 'error') {
+    return state.errorMsg ? `⚠️ agent 失败:${state.errorMsg}` : '⚠️ agent 失败';
+  }
+
+  for (let i = state.blocks.length - 1; i >= 0; i -= 1) {
+    const block = state.blocks[i];
+    if (block?.kind !== 'text') continue;
+    const text = block.content.trim();
+    if (text) return text;
+  }
+
+  return '_（未返回内容）_';
+}
+
 function renderBlock(block: Block): string {
   if (block.kind === 'text') {
     return block.content.trim();
