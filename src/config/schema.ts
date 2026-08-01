@@ -103,8 +103,8 @@ export interface AppPreferences {
   messageReplyMigrated?: boolean;
   /**
    * Whether to render tool-call blocks (Bash / Read / Edit / ...) in the
-   * output. Default true. Turn off if you only care about Codex's final
-   * text answer and want to hide the "工具调用过程".
+   * output. Default false: regular streams show phase progress and assistant
+   * text only. Turn on when debugging and you need the detailed tool trace.
    */
   showToolCalls?: boolean;
   /**
@@ -202,7 +202,7 @@ export function getMessageReplyMode(cfg: AppConfig): MessageReplyMode {
 
 /** Resolve the show-tool-calls preference with default fallback. */
 export function getShowToolCalls(cfg: AppConfig): boolean {
-  return cfg.preferences?.showToolCalls !== false;
+  return cfg.preferences?.showToolCalls === true;
 }
 
 /** Resolve the max-concurrent-runs preference with default + sanity clamp. */
