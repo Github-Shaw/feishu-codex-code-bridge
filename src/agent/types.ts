@@ -2,6 +2,7 @@ export type AgentEvent =
   | { type: 'system'; sessionId?: string; cwd?: string; model?: string }
   | { type: 'text'; delta: string }
   | { type: 'thinking'; delta: string }
+  | { type: 'context_compacted' }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; id: string; output: string; isError: boolean }
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; costUsd?: number }

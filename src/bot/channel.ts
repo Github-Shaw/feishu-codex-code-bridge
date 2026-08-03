@@ -13,6 +13,7 @@ import {
   initialState,
   markIdleTimeout,
   markInterrupted,
+  markWaiting,
   reduce,
   type RunState,
 } from '../card/run-state';
@@ -45,6 +46,7 @@ import { fetchQuotedContext, renderQuotedBlock, type QuotedContext } from './quo
 import { addWorkingReaction, removeReaction } from './reaction';
 
 const DEBOUNCE_MS = 600;
+const PROGRESS_HEARTBEAT_MS = 30_000;
 
 // Lark SDK logs API errors at error level even when the caller catches them.
 // These specific codes are EXPECTED in our flow (wiki-node lookup that
@@ -674,7 +676,7 @@ async function recallStreamingReply(
  * on every state transition. Used by both card and markdown reply modes —
  * the only difference between the two is what `flush` does with the state.
  */
-async function processAgentStream(
+export async function processAgentStream(
   handle: RunHandle,
   sessions: SessionStore,
   scope: string,
@@ -683,6 +685,36 @@ async function processAgentStream(
   flush: (state: RunState) => Promise<void>,
 ): Promise<void> {
   let state: RunState = initialState;
+  const runStartedAt = Date.now();
+  let lastVisibleProgressAt = runStartedAt;
+  let flushChain = Promise.resolve();
+  const enqueueFlush = (snapshot: RunState): Promise<void> => {
+    const pending = flushChain.then(() => flush(snapshot));
+    // A failed heartbeat update must not poison later, more important final
+    // updates. Event-driven callers still await `pending` and see the error.
+    flushChain = pending.catch(() => undefined);
+    return pending;
+  };
+
+  // Codex can be legitimately silent while reasoning, compacting context, or
+  // waiting on a tool. Refresh only after 30 seconds without a renderable
+  // event, then at the same low frequency, so the progress surface never
+  // looks frozen without creating noisy Feishu updates.
+  const heartbeatTimer = setInterval(() => {
+    if (state.terminal !== 'running') return;
+    const now = Date.now();
+    if (now - lastVisibleProgressAt < PROGRESS_HEARTBEAT_MS) return;
+    const waitedSeconds = Math.max(
+      Math.round(PROGRESS_HEARTBEAT_MS / 1_000),
+      Math.floor((now - runStartedAt) / 1_000),
+    );
+    state = markWaiting(state, waitedSeconds);
+    lastVisibleProgressAt = now;
+    log.info('card', 'heartbeat', { waitedSeconds, contextCompacted: state.contextCompacted });
+    void enqueueFlush(state).catch((err) => {
+      log.fail('stream', err, { step: 'progress-heartbeat' });
+    });
+  }, PROGRESS_HEARTBEAT_MS);
 
   // Idle watchdog: codex going silent for `idleTimeoutMs` is treated as
   // "presumed hung", we stop() and surface a timeout marker on the card.
@@ -754,10 +786,11 @@ async function processAgentStream(
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
       state = reduce(state, evt);
+      lastVisibleProgressAt = Date.now();
       if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
         log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
       }
-      await flush(state);
+      await enqueueFlush(state);
       // Stop iterating as soon as we have a terminal state. Some codex
       // versions don't close stdout immediately after the result event, which
       // would leave the for-await waiting forever otherwise.
@@ -765,6 +798,7 @@ async function processAgentStream(
     }
   } finally {
     if (timer) clearTimeout(timer);
+    clearInterval(heartbeatTimer);
   }
 
   // If state already reached a terminal event (done/error/etc.) before the
@@ -781,7 +815,7 @@ async function processAgentStream(
     }
   }
   log.info('card', 'final', { terminal: state.terminal, interrupted: handle.interrupted });
-  await flush(state);
+  await enqueueFlush(state);
     // Reap the subprocess. Two regimes:
   //  - Interrupted (user /stop, idle watchdog, disconnect): stop() was already
   //    fire-and-forgotten by whoever set handle.interrupted; this awaits it.

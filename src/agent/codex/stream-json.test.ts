@@ -69,4 +69,16 @@ describe('translateEvent', () => {
       }),
     ]).toEqual([]);
   });
+
+  it('translates context compaction lifecycle events', () => {
+    expect([...translateEvent({ type: 'context_compacted' })]).toEqual([
+      { type: 'context_compacted' },
+    ]);
+    expect([
+      ...translateEvent({
+        type: 'item.completed',
+        item: { id: 'cmp_1', type: 'context_compaction' },
+      }),
+    ]).toEqual([{ type: 'context_compacted' }]);
+  });
 });

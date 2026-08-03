@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RunState } from './run-state';
-import { renderFinalText } from './text-renderer';
+import { renderFinalText, renderText } from './text-renderer';
 
 function state(overrides: Partial<RunState> = {}): RunState {
   return {
@@ -51,5 +51,28 @@ describe('renderFinalText', () => {
 
   it('returns an explicit marker when a successful run has no text', () => {
     expect(renderFinalText(state())).toBe('_（未返回内容）_');
+  });
+});
+
+describe('renderText progress status', () => {
+  it('renders a low-frequency elapsed-time heartbeat', () => {
+    expect(
+      renderText(
+        state({ terminal: 'running', footer: 'thinking', waitedSeconds: 60 }),
+      ),
+    ).toBe('_⏳ 仍在处理，已等待 60 秒_');
+  });
+
+  it('prioritizes a context compaction notice', () => {
+    expect(
+      renderText(
+        state({
+          terminal: 'running',
+          footer: 'thinking',
+          waitedSeconds: 90,
+          contextCompacted: true,
+        }),
+      ),
+    ).toBe('_🧹 已整理会话上下文，继续处理中，已等待 90 秒_');
   });
 });

@@ -1,7 +1,10 @@
 import type { LarkChannel } from '@larksuiteoapi/node-sdk';
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentRun } from '../agent/types';
 import { initialState, type RunState } from '../card/run-state';
-import { sendStandaloneFinal } from './channel';
+import type { SessionStore } from '../session/store';
+import type { RunHandle } from './active-runs';
+import { processAgentStream, sendStandaloneFinal } from './channel';
 
 function terminalState(terminal: RunState['terminal']): RunState {
   return { ...initialState, terminal };
@@ -63,5 +66,49 @@ describe('sendStandaloneFinal', () => {
     ).rejects.toThrow('send failed');
 
     expect(events).toEqual(['final-sent']);
+  });
+});
+
+describe('processAgentStream progress heartbeat', () => {
+  it('updates a silent run after 30 seconds', async () => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const run: AgentRun = {
+      events: (async function* () {
+        await gate;
+        yield { type: 'done' as const };
+      })(),
+      stop: vi.fn(async () => undefined),
+      waitForExit: vi.fn(async () => true),
+    };
+    const handle: RunHandle = { run, interrupted: false };
+    const flush = vi.fn(async () => undefined);
+
+    try {
+      const processing = processAgentStream(
+        handle,
+        {} as SessionStore,
+        'oc_chat',
+        '/work',
+        undefined,
+        flush,
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(flush).toHaveBeenCalledWith(
+        expect.objectContaining({
+          terminal: 'running',
+          waitedSeconds: 30,
+        }),
+      );
+
+      finish();
+      await processing;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

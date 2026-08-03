@@ -43,7 +43,7 @@ export function renderCard(state: RunState): object {
   }
 
   if (state.terminal === 'running') {
-    if (state.footer) elements.push(footerStatus(state.footer));
+    if (state.footer) elements.push(footerStatus(state));
     elements.push(stopButton());
   }
 
@@ -182,7 +182,15 @@ function stopButton(): object {
   };
 }
 
-function footerStatus(status: Exclude<FooterStatus, null>): object {
+function footerStatus(state: RunState): object {
+  if (state.contextCompacted) {
+    const waited = state.waitedSeconds ? `，已等待 ${state.waitedSeconds} 秒` : '';
+    return noteMd(`🧹 已整理会话上下文，继续处理中${waited}`);
+  }
+  if (state.waitedSeconds) {
+    return noteMd(`⏳ 仍在处理，已等待 ${state.waitedSeconds} 秒`);
+  }
+  const status = state.footer as Exclude<FooterStatus, null>;
   const text =
     status === 'thinking'
       ? '🧠 正在思考'
@@ -197,6 +205,8 @@ function summaryText(state: RunState): string {
   if (state.terminal === 'idle_timeout') return '已超时';
   if (state.terminal === 'error') return '出错';
   if (state.terminal === 'done') return '已完成';
+  if (state.contextCompacted) return '已整理上下文，继续处理中';
+  if (state.waitedSeconds) return `仍在处理，已等待 ${state.waitedSeconds} 秒`;
   if (state.footer === 'tool_running') return '正在调用工具';
   if (state.footer === 'streaming') return '正在输出';
   return '思考中';

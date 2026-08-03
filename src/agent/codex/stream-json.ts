@@ -35,6 +35,13 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
     return;
   }
 
+  // App-server and rollout streams use slightly different spellings. Newer
+  // Codex exec versions may expose either one directly, so accept both.
+  if (evt.type === 'context_compacted' || evt.type === 'context.compacted') {
+    yield { type: 'context_compacted' };
+    return;
+  }
+
   if (evt.type === 'item.started' && evt.item) {
     const tool = toToolUse(evt.item);
     if (tool) yield tool;
@@ -42,6 +49,10 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
   }
 
   if (evt.type === 'item.completed' && evt.item) {
+    if (evt.item.type === 'context_compaction') {
+      yield { type: 'context_compacted' };
+      return;
+    }
     yield* translateCompletedItem(evt.item);
     return;
   }
