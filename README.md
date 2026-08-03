@@ -50,6 +50,7 @@ The wizard creates the app shell, but you still need to confirm a few things on 
 **Permission scopes:**
 - `im:message`
 - `im:message:send_as_bot`
+- `im:message:recall`
 - `im:resource`
 - `im:chat` (needed when the bot creates or manages groups)
 - `drive:drive` (needed to read and reply to cloud-doc comments)

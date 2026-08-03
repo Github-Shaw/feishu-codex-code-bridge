@@ -50,6 +50,7 @@ feishu-codex-code-bridge start
 **权限 scope**：
 - `im:message`
 - `im:message:send_as_bot`
+- `im:message:recall`
 - `im:resource`
 
 **事件订阅（使用长连接接收）**：

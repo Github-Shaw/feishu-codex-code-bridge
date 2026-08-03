@@ -563,7 +563,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   try {
     if (replyMode === 'card') {
       let finalState = initialState;
-      await channel.stream(
+      const streamReply = await channel.stream(
         chatId,
         {
           card: {
@@ -578,10 +578,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
         sendOpts,
       );
-      await sendStandaloneFinal(channel, chatId, finalState, sendOpts);
+      await sendStandaloneFinal(channel, chatId, finalState, sendOpts, streamReply);
     } else if (replyMode === 'markdown') {
       let finalState = initialState;
-      await channel.stream(
+      const streamReply = await channel.stream(
         chatId,
         {
           markdown: async (ctrl) => {
@@ -593,7 +593,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         },
         sendOpts,
       );
-      await sendStandaloneFinal(channel, chatId, finalState, sendOpts);
+      await sendStandaloneFinal(channel, chatId, finalState, sendOpts, streamReply);
     } else {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
@@ -624,11 +624,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
  * its visible content stuck on an old progress frame. A regular message is
  * not tied to the card lifecycle, so it is the canonical final delivery.
  */
-async function sendStandaloneFinal(
-  channel: LarkChannel,
+export async function sendStandaloneFinal(
+  channel: Pick<LarkChannel, 'send' | 'recallMessage'>,
   chatId: string,
   state: RunState,
   sendOpts: { replyTo: string; replyInThread?: boolean },
+  streamReply?: { messageId: string; chunkIds?: string[] },
 ): Promise<void> {
   if (state.terminal === 'running') {
     log.warn('final', 'skip-still-running');
@@ -637,6 +638,35 @@ async function sendStandaloneFinal(
   const body = renderFinalText(state);
   await channel.send(chatId, { markdown: body }, sendOpts);
   log.info('final', 'sent', { terminal: state.terminal, chars: body.length });
+
+  // The regular message above is the canonical result. Only after that send
+  // succeeds may we remove the progress stream; otherwise a transient final
+  // delivery failure would leave the user with no response at all. Preserve
+  // failed/interrupted/timeout streams as diagnostic evidence.
+  if (state.terminal === 'done' && streamReply) {
+    await recallStreamingReply(channel, streamReply);
+  }
+}
+
+async function recallStreamingReply(
+  channel: Pick<LarkChannel, 'recallMessage'>,
+  streamReply: { messageId: string; chunkIds?: string[] },
+): Promise<void> {
+  const messageIds = [...new Set([streamReply.messageId, ...(streamReply.chunkIds ?? [])])];
+  for (const messageId of messageIds) {
+    try {
+      await channel.recallMessage(messageId);
+      log.info('stream', 'recalled-after-final', { messageId });
+    } catch (err) {
+      // Cleanup is best-effort. The standalone final is already visible and
+      // must remain successful even when the app lacks recall permission.
+      log.fail('stream', err, {
+        step: 'recall-after-final',
+        messageId,
+        requiredScope: 'im:message:recall',
+      });
+    }
+  }
 }
 
 /**
