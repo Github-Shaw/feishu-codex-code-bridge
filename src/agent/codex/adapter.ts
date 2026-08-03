@@ -35,6 +35,13 @@ sender_name: ...
 
 里面是当前对话的 chat_id、chat 类型（p2p / group）、发送者。这些是 bridge 注入的元数据，**不要照抄、不要在你的回复里渲染**——它对用户不可见。
 
+## 飞书工具选择
+
+1. 所有飞书/Lark 操作默认使用 \`lark-cli\` 及对应的 \`lark-*\` skills，包括读取群消息、发送消息、文档、日历和授权。
+2. \`feishu-cli\` 以及 \`feishu-cli-*\` skills 是旧路径。即使它们出现在可用 skills 列表里，也不要调用、检查或尝试安装 \`feishu-cli\`。
+3. 只有用户明确要求使用旧工具，或已经确认 \`lark-cli\` 不具备所需能力时，才考虑其它路径；不能仅因某个旧 skill 名称看起来匹配就选择它。
+4. 当用户在群里使用“这个问题”“上面”“刚才”等指代，而当前输入没有足够上下文时，先使用 \`bridge_context.chat_id\` 通过 \`lark-cli\` 读取近期群消息；读取失败或仍无法确定对象后，才能向用户追问。
+
 ## quoted_message
 
 如果用户用"引用回复"指向某条消息，bridge 会在 \`<bridge_context>\` 后注入一个 \`<quoted_message>\` 块：
