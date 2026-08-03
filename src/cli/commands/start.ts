@@ -371,6 +371,7 @@ function printScopeReminder(): void {
   console.log('  权限 scope:');
   console.log('    - im:message');
   console.log('    - im:message:send_as_bot');
+  console.log('    - im:message:recall');
   console.log('    - im:resource');
   console.log('    - im:chat (创建群需要)');
   console.log('    - drive:drive (读写云文档评论需要)\n');

@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { log } from '../../core/logger';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../types';
+import { monitorContextCompactions } from './rollout-monitor';
 import { translateEvent } from './stream-json';
 
 export interface CodexAdapterOptions {
@@ -34,6 +35,13 @@ sender_name: ...
 \`\`\`
 
 里面是当前对话的 chat_id、chat 类型（p2p / group）、发送者。这些是 bridge 注入的元数据，**不要照抄、不要在你的回复里渲染**——它对用户不可见。
+
+## 飞书工具选择
+
+1. 所有飞书/Lark 操作默认使用 \`lark-cli\` 及对应的 \`lark-*\` skills，包括读取群消息、发送消息、文档、日历和授权。
+2. \`feishu-cli\` 以及 \`feishu-cli-*\` skills 是旧路径。即使它们出现在可用 skills 列表里，也不要调用、检查或尝试安装 \`feishu-cli\`。
+3. 只有用户明确要求使用旧工具，或已经确认 \`lark-cli\` 不具备所需能力时，才考虑其它路径；不能仅因某个旧 skill 名称看起来匹配就选择它。
+4. 当用户在群里使用“这个问题”“上面”“刚才”等指代，而当前输入没有足够上下文时，先使用 \`bridge_context.chat_id\` 通过 \`lark-cli\` 读取近期群消息；读取失败或仍无法确定对象后，才能向用户追问。
 
 ## quoted_message
 
@@ -140,6 +148,7 @@ export class CodexAdapter implements AgentAdapter {
       extraArgs: this.extraArgs,
     });
 
+    const runStartedAtMs = Date.now();
     const child = spawn(this.binary, args, {
       cwd: opts.cwd,
       env: { ...process.env, FEISHU_CODEX_BRIDGE: '1' },
@@ -202,7 +211,13 @@ export class CodexAdapter implements AgentAdapter {
     const stopGraceMs = opts.stopGraceMs ?? 5000;
 
     return {
-      events: createEventStream(child, stderrChunks, () => runtimeError),
+      events: createEventStream(
+        child,
+        stderrChunks,
+        () => runtimeError,
+        runStartedAtMs,
+        opts.sessionId,
+      ),
       async stop() {
         if (child.exitCode !== null || child.signalCode !== null) return;
         log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
@@ -292,6 +307,8 @@ async function* createEventStream(
   child: CodexChild,
   stderrChunks: Buffer[],
   getError: () => Error | null,
+  runStartedAtMs: number,
+  initialSessionId?: string,
 ): AsyncGenerator<AgentEvent> {
   // If fork itself failed synchronously, child.pid is undefined. The 'error'
   // event (ENOENT etc.) fires in the next tick, so also check getError().
@@ -305,8 +322,54 @@ async function* createEventStream(
   }
 
   const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const compactions = new AsyncQueue<AgentEvent>();
+  let monitorSessionId: string | undefined;
+  let monitorAbort: AbortController | undefined;
+  let monitorTask: Promise<void> | undefined;
+  let lastCompactionYieldAt = 0;
+
+  const startMonitor = (sessionId: string): void => {
+    if (sessionId === monitorSessionId) return;
+    monitorAbort?.abort();
+    monitorSessionId = sessionId;
+    monitorAbort = new AbortController();
+    monitorTask = monitorContextCompactions({
+      sessionId,
+      sinceMs: runStartedAtMs,
+      signal: monitorAbort.signal,
+      onCompacted: () => compactions.push({ type: 'context_compacted' }),
+    }).catch((err) => {
+      log.fail('agent', err, { step: 'context-compaction-monitor', sessionId });
+    });
+  };
+  if (initialSessionId) startMonitor(initialSessionId);
+
+  const lineIterator = rl[Symbol.asyncIterator]();
+  let lineNext = lineIterator.next().then((result) => ({ source: 'stdout' as const, result }));
+  let compactionNext = compactions
+    .next()
+    .then((result) => ({ source: 'compaction' as const, result }));
   try {
-    for await (const line of rl) {
+    while (true) {
+      const next = await Promise.race([lineNext, compactionNext]);
+      if (next.source === 'compaction') {
+        if (next.result.done) break;
+        compactionNext = compactions
+          .next()
+          .then((result) => ({ source: 'compaction' as const, result }));
+        const now = Date.now();
+        if (now - lastCompactionYieldAt >= 2_000) {
+          lastCompactionYieldAt = now;
+          yield next.result.value;
+        }
+        continue;
+      }
+
+      if (next.result.done) break;
+      const line = next.result.value;
+      lineNext = lineIterator
+        .next()
+        .then((result) => ({ source: 'stdout' as const, result }));
       const trimmed = line.trim();
       if (!trimmed) continue;
       let parsed: unknown;
@@ -315,9 +378,20 @@ async function* createEventStream(
       } catch {
         continue;
       }
-      yield* translateEvent(parsed);
+      for (const evt of translateEvent(parsed)) {
+        if (evt.type === 'system' && evt.sessionId) startMonitor(evt.sessionId);
+        if (evt.type === 'context_compacted') {
+          const now = Date.now();
+          if (now - lastCompactionYieldAt < 2_000) continue;
+          lastCompactionYieldAt = now;
+        }
+        yield evt;
+      }
     }
   } finally {
+    monitorAbort?.abort();
+    await monitorTask;
+    compactions.close();
     rl.close();
   }
 
@@ -339,5 +413,33 @@ async function* createEventStream(
     yield { type: 'error', message: `codex exited with code ${exitCode}${detail}` };
   } else if (runtimeError) {
     yield { type: 'error', message: `codex runtime error: ${runtimeError.message}` };
+  }
+}
+
+class AsyncQueue<T> {
+  private readonly values: T[] = [];
+  private readonly waiters: Array<(result: IteratorResult<T>) => void> = [];
+  private closed = false;
+
+  push(value: T): void {
+    if (this.closed) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ value, done: false });
+    else this.values.push(value);
+  }
+
+  next(): Promise<IteratorResult<T>> {
+    const value = this.values.shift();
+    if (value !== undefined) return Promise.resolve({ value, done: false });
+    if (this.closed) return Promise.resolve({ value: undefined, done: true });
+    return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) {
+      waiter({ value: undefined, done: true });
+    }
   }
 }

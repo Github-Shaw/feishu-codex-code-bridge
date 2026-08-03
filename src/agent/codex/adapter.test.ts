@@ -23,6 +23,16 @@ describe('buildCodexArgs', () => {
     expect(BRIDGE_DEVELOPER_INSTRUCTIONS).toContain('不得把抽样或外推直接写成已确认根因');
   });
 
+  it('uses lark-cli as the default Feishu tool', () => {
+    expect(BRIDGE_DEVELOPER_INSTRUCTIONS).toContain('所有飞书/Lark 操作默认使用 `lark-cli`');
+    expect(BRIDGE_DEVELOPER_INSTRUCTIONS).toContain(
+      '不要调用、检查或尝试安装 `feishu-cli`',
+    );
+    expect(BRIDGE_DEVELOPER_INSTRUCTIONS).toContain(
+      '通过 `lark-cli` 读取近期群消息',
+    );
+  });
+
   it('preserves resume argument ordering', () => {
     const args = buildCodexArgs({
       sessionId: 'session-1',

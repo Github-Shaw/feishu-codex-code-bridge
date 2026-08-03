@@ -23,6 +23,10 @@ export interface RunState {
   footer: FooterStatus;
   terminal: Terminal;
   errorMsg?: string;
+  /** Total wall-clock time shown by the low-frequency progress heartbeat. */
+  waitedSeconds?: number;
+  /** True after Codex compacts the active context, until real work resumes. */
+  contextCompacted?: boolean;
   /** Set when terminal === 'idle_timeout' — how long codex was idle before
    * the watchdog gave up (so the message can say "N 分钟无响应"). */
   idleTimeoutMinutes?: number;
@@ -52,6 +56,8 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           blocks: [...state.blocks.slice(0, -1), next],
           reasoning: { ...state.reasoning, active: false },
           footer: 'streaming',
+          waitedSeconds: undefined,
+          contextCompacted: false,
         };
       }
       return {
@@ -59,6 +65,8 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         blocks: [...state.blocks, { kind: 'text', content: evt.delta, streaming: true }],
         reasoning: { ...state.reasoning, active: false },
         footer: 'streaming',
+        waitedSeconds: undefined,
+        contextCompacted: false,
       };
     }
 
@@ -67,6 +75,16 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         ...state,
         reasoning: { content: state.reasoning.content + evt.delta, active: true },
         footer: 'thinking',
+        waitedSeconds: undefined,
+      };
+    }
+
+    case 'context_compacted': {
+      return {
+        ...state,
+        footer: 'thinking',
+        waitedSeconds: undefined,
+        contextCompacted: true,
       };
     }
 
@@ -82,6 +100,8 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         blocks: [...closeStreamingText(state.blocks), { kind: 'tool', tool }],
         reasoning: { ...state.reasoning, active: false },
         footer: 'tool_running',
+        waitedSeconds: undefined,
+        contextCompacted: false,
       };
     }
 
@@ -97,11 +117,23 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           },
         };
       });
-      return { ...state, blocks };
+      return {
+        ...state,
+        blocks,
+        waitedSeconds: undefined,
+        contextCompacted: false,
+      };
     }
 
     case 'error': {
-      return { ...state, terminal: 'error', errorMsg: evt.message, footer: null };
+      return {
+        ...state,
+        terminal: 'error',
+        errorMsg: evt.message,
+        footer: null,
+        waitedSeconds: undefined,
+        contextCompacted: false,
+      };
     }
 
     case 'done': {
@@ -111,12 +143,19 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         reasoning: { ...state.reasoning, active: false },
         terminal: 'done',
         footer: null,
+        waitedSeconds: undefined,
+        contextCompacted: false,
       };
     }
 
     default:
       return state;
   }
+}
+
+export function markWaiting(state: RunState, waitedSeconds: number): RunState {
+  if (state.terminal !== 'running') return state;
+  return { ...state, waitedSeconds };
 }
 
 export function markInterrupted(state: RunState): RunState {
@@ -126,6 +165,8 @@ export function markInterrupted(state: RunState): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'interrupted',
     footer: null,
+    waitedSeconds: undefined,
+    contextCompacted: false,
   };
 }
 
@@ -136,6 +177,8 @@ export function markIdleTimeout(state: RunState, minutes: number): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'idle_timeout',
     footer: null,
+    waitedSeconds: undefined,
+    contextCompacted: false,
     idleTimeoutMinutes: minutes,
   };
 }
@@ -148,5 +191,7 @@ export function finalizeIfRunning(state: RunState): RunState {
     reasoning: { ...state.reasoning, active: false },
     terminal: 'done',
     footer: null,
+    waitedSeconds: undefined,
+    contextCompacted: false,
   };
 }

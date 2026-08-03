@@ -27,7 +27,7 @@ export function renderText(state: RunState): string {
   } else if (state.terminal === 'error' && state.errorMsg) {
     parts.push(`⚠️ agent 失败:${state.errorMsg}`);
   } else if (state.terminal === 'running' && state.footer) {
-    parts.push(footerLine(state.footer));
+    parts.push(footerLine(state));
   }
 
   return parts.join('\n\n');
@@ -79,7 +79,13 @@ function toolLine(tool: ToolEntry): string {
   return `> ${toolHeaderText(tool)}`;
 }
 
-function footerLine(status: 'thinking' | 'tool_running' | 'streaming'): string {
+function footerLine(state: RunState): string {
+  if (state.contextCompacted) {
+    const waited = state.waitedSeconds ? `，已等待 ${state.waitedSeconds} 秒` : '';
+    return `_🧹 已整理会话上下文，继续处理中${waited}_`;
+  }
+  if (state.waitedSeconds) return `_⏳ 仍在处理，已等待 ${state.waitedSeconds} 秒_`;
+  const status = state.footer;
   if (status === 'thinking') return '_🧠 正在思考…_';
   if (status === 'tool_running') return '_🧰 正在调用工具…_';
   return '_✍️ 正在输出…_';
