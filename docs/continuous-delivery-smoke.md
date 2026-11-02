@@ -48,3 +48,17 @@ If authorization or the outcome of a remote write is unclear, pause dependent
 actions and reconcile the authorization and remote state before continuing.
 Verify whether the previous write already succeeded before retrying it.
 Recovery must preserve the authorized scope and the requirement for human merge.
+
+## CI acceptance
+
+Absent or unreadable CI is unknown and must not be treated as passing. Failed CI
+requires investigation, repair within the authorized scope, and a successful rerun
+against the current PR head before acceptance. Any repair for this smoke test
+must remain in this document; no application code or workflows may be changed.
+
+The host independently gates publication on `pnpm typecheck`, `pnpm test`, and
+`pnpm build`. Worker-local results and host-reported results must remain distinct
+from verified PR CI. A sandbox-blocked check does not count as passing.
+
+Merge is human-only, including after all checks pass. Neither the agent nor the
+host may perform a merge or enable automatic merge.
