@@ -29,8 +29,22 @@ all three checks and validates the final change before publishing.
 ## Manual merge
 
 The worker leaves the change and check results for the host to validate, commit,
-and publish as a pull request. PR creation and merge are pending in this initial
-record; the full target flow is not yet accepted.
+and publish to [PR #5](https://github.com/Github-Shaw/feishu-codex-code-bridge/pull/5).
+Acceptance of the full target flow still requires host validation and human review.
 
 A human must review the pull request and its checks and perform the merge.
 Merge is always manual; neither the agent nor the host may perform automatic merges.
+
+## Recovery
+
+After a process interruption, inspect the current files and Git history before
+resuming. Confirm that the same task, worktree, exact recorded Codex session, and
+bound PR refer to the same delivery. For ticket `158fe599b97c3edf8d536dbd233f2014`,
+the review destination is the existing PR #5 linked above. Resume the recorded
+session and continue that PR; do not treat the interruption as a new task or
+create a duplicate PR.
+
+If authorization or the outcome of a remote write is unclear, pause dependent
+actions and reconcile the authorization and remote state before continuing.
+Verify whether the previous write already succeeded before retrying it.
+Recovery must preserve the authorized scope and the requirement for human merge.
